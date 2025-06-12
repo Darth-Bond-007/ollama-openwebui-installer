@@ -17,7 +17,7 @@ Administrative privileges (sudo).
 
 Installation
 Run the following command to download and execute the installer:
-curl -fsSL https://raw.githubusercontent.com/yourusername/ollama-openwebui-installer/main/install_ollama_openwebui.py | python3
+curl -fsSL https://raw.githubusercontent.com/Darth-Bond-007/ollama-openwebui-installer/main/install_ollama_openwebui.py | python3
 
 Replace yourusername with your GitHub username.
 Usage
