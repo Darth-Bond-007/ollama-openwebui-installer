@@ -53,25 +53,37 @@ def install_homebrew():
         )
         run_command(homebrew_install, "Failed to install Homebrew", retries=2)
     # Fix permissions
-    run_command(
-        f"sudo chown -R $(whoami):admin {brew_path} /opt/homebrew /opt/homebrew/Cellar",
-        "Failed to fix Homebrew permissions",
-        retries=2
-    )
-    # Clean up Homebrew
-    run_command("brew cleanup", "Failed to clean Homebrew", retries=2, silent=True)
-    run_command("brew update-reset", "Failed to reset Homebrew", retries=2, silent=True)
-    # Check Homebrew health, but proceed if it fails
     try:
-        run_command("brew doctor", "Homebrew health check failed, proceeding anyway", retries=2)
+        run_command(
+            f"sudo chown -R $(whoami):admin {brew_path} /opt/homebrew /opt/homebrew/Cellar",
+            "Failed to fix Homebrew permissions",
+            retries=2
+        )
     except subprocess.CalledProcessError:
-        print("Warning: brew doctor failed, but continuing installation.")
-    run_command("brew update", "Failed to update Homebrew", retries=2)
+        print("Warning: Failed to fix Homebrew permissions, continuing...")
+    # Clean up Homebrew
+    try:
+        run_command("brew cleanup", "Failed to clean Homebrew", retries=2, silent=True)
+        run_command("brew update-reset", "Failed to reset Homebrew", retries=2, silent=True)
+    except subprocess.CalledProcessError:
+        print("Warning: Failed to clean or reset Homebrew, continuing...")
+    # Check Homebrew health, ignore failures
+    try:
+        run_command("brew doctor", "Homebrew health check failed", retries=2)
+    except subprocess.CalledProcessError:
+        print("Warning: brew doctor failed, continuing...")
+    try:
+        run_command("brew update", "Failed to update Homebrew", retries=2)
+    except subprocess.CalledProcessError:
+        print("Warning: Failed to update Homebrew, continuing...")
     os.environ["PATH"] = f"{brew_path}:{os.environ['PATH']}"
-    run_command(
-        f"echo 'export PATH={brew_path}:$PATH' >> ~/.zshrc",
-        "Failed to update PATH"
-    )
+    try:
+        run_command(
+            f"echo 'export PATH={brew_path}:$PATH' >> ~/.zshrc",
+            "Failed to update PATH"
+        )
+    except subprocess.CalledProcessError:
+        print("Warning: Failed to update PATH in ~/.zshrc, continuing...")
 
 def check_python_version():
     """Check if the current Python is 3.11."""
@@ -96,70 +108,82 @@ def install_python(system):
 
     print("Installing Python 3.11...")
     if system == "Linux":
-        run_command(
-            "sudo apt-get update && sudo apt-get install -y software-properties-common && "
-            "sudo add-apt-repository -y ppa:deadsnakes/ppa && sudo apt-get update && "
-            "sudo apt-get install -y python3.11 python3.11-dev python3.11-venv",
-            "Failed to install Python 3.11 on Linux",
-            retries=2
-        )
-        python_bin = "python3.11"
-    elif system == "Darwin":
-        install_homebrew()
-        print("Attempting to install Python 3.11 via Homebrew...")
         try:
             run_command(
-                "brew unlink python@3.13 || true",
-                "Failed to unlink Python 3.13",
-                silent=True
-            )
-            brew_list = run_command(
-                "brew list python@3.11 || true",
-                "Failed to check installed packages",
-                silent=True
-            )
-            if "python@3.11" in brew_list:
-                print("Python 3.11 is installed but not linked.")
-            else:
-                run_command(
-                    "brew install python@3.11",
-                    "Failed to install Python 3.11 via Homebrew",
-                    retries=2
-                )
-            run_command(
-                "brew link --force python@3.11",
-                "Failed to link Python 3.11",
+                "sudo apt-get update && sudo apt-get install -y software-properties-common && "
+                "sudo add-apt-repository -y ppa:deadsnakes/ppa && sudo apt-get update && "
+                "sudo apt-get install -y python3.11 python3.11-dev python3.11-venv",
+                "Failed to install Python 3.11 on Linux",
                 retries=2
             )
-            python_bin = "/opt/homebrew/bin/python3.11"
-            if os.path.exists(python_bin):
-                python_version = run_command(
-                    f"{python_bin} --version",
-                    "Python 3.11 verification failed after Homebrew install",
-                    silent=False
-                )
-                print(f"Python 3.11 installed via Homebrew: {python_version.strip()}")
-                return python_bin
-            else:
-                raise subprocess.CalledProcessError(1, "brew install", "Python 3.11 binary not found")
+            python_bin = "python3.11"
         except subprocess.CalledProcessError:
-            print("Homebrew installation failed, falling back to Python.org installer...")
-            temp_dir = tempfile.mkdtemp()
-            python_pkg = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-macos11.pkg"
-            pkg_path = os.path.join(temp_dir, "python-3.11.9-macos11.pkg")
-            urllib.request.urlretrieve(python_pkg, pkg_path)
+            print("Error: Failed to install Python 3.11 on Linux.")
+            sys.exit(1)
+    elif system == "Darwin":
+        try:
+            install_homebrew()
+            print("Attempting to install Python 3.11 via Homebrew...")
+            try:
+                run_command(
+                    "brew unlink python@3.13 || true",
+                    "Failed to unlink Python 3.13",
+                    silent=True
+                )
+                brew_list = run_command(
+                    "brew list python@3.11 || true",
+                    "Failed to check installed packages",
+                    silent=True
+                )
+                if "python@3.11" in brew_list:
+                    print("Python 3.11 is installed but not linked.")
+                else:
+                    run_command(
+                        "brew install python@3.11",
+                        "Failed to install Python 3.11 via Homebrew",
+                        retries=2
+                    )
+                run_command(
+                    "brew link --force python@3.11",
+                    "Failed to link Python 3.11",
+                    retries=2
+                )
+                python_bin = "/opt/homebrew/bin/python3.11"
+                if os.path.exists(python_bin):
+                    python_version = run_command(
+                        f"{python_bin} --version",
+                        "Python 3.11 verification failed after Homebrew install",
+                        silent=False
+                    )
+                    print(f"Python 3.11 installed via Homebrew: {python_version.strip()}")
+                    return python_bin
+                else:
+                    raise subprocess.CalledProcessError(1, "brew install", "Python 3.11 binary not found")
+            except subprocess.CalledProcessError:
+                print("Homebrew installation failed, falling back to Python.org installer...")
+        except Exception as e:
+            print(f"Homebrew setup failed: {e}, falling back to Python.org installer...")
+        temp_dir = tempfile.mkdtemp()
+        python_pkg = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-macos11.pkg"
+        pkg_path = os.path.join(temp_dir, "python-3.11.9-macos11.pkg")
+        urllib.request.urlretrieve(python_pkg, pkg_path)
+        try:
             run_command(
                 f"sudo installer -pkg {pkg_path} -target /",
                 "Failed to install Python 3.11 from package",
                 retries=2
             )
+        finally:
             os.remove(pkg_path)
-            python_bin = "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3.11"
-            os.environ["PATH"] = f"{os.path.dirname(python_bin)}:{os.environ['PATH']}"
+        python_bin = "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3.11"
+        os.environ["PATH"] = f"{os.path.dirname(python_bin)}:{os.environ['PATH']}"
+        try:
             run_command(
                 f"echo 'export PATH={os.path.dirname(python_bin)}:$PATH' >> ~/.zshrc",
                 "Failed to update PATH for Python 3.11"
             )
+        except subprocess.CalledProcessError:
+            print("Warning: Failed to update PATH in ~/.zshrc, continuing...")
 
     try:
         python_version = run_command(
