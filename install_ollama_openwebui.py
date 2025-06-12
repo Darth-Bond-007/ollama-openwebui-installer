@@ -27,7 +27,7 @@ def run_command(command, error_message, silent=False, retries=1):
                 shell=True,
                 check=True,
                 text=True,
-                capture_output=True  # Always capture output
+                capture_output=True
             )
             if not silent:
                 print(f"Command output: {result.stdout}")
@@ -35,6 +35,7 @@ def run_command(command, error_message, silent=False, retries=1):
         except subprocess.CalledProcessError as e:
             print(f"Attempt {attempt} failed: {e}")
             print(f"Command output: {e.output}")
+            print(f"Command stderr: {e.stderr}")
             if attempt == retries:
                 print(f"{error_message}: {e}")
                 raise
@@ -57,8 +58,14 @@ def install_homebrew():
         "Failed to fix Homebrew permissions",
         retries=2
     )
-    # Check Homebrew health
-    run_command("brew doctor", "Homebrew health check failed", retries=2)
+    # Clean up Homebrew
+    run_command("brew cleanup", "Failed to clean Homebrew", retries=2, silent=True)
+    run_command("brew update-reset", "Failed to reset Homebrew", retries=2, silent=True)
+    # Check Homebrew health, but proceed if it fails
+    try:
+        run_command("brew doctor", "Homebrew health check failed, proceeding anyway", retries=2)
+    except subprocess.CalledProcessError:
+        print("Warning: brew doctor failed, but continuing installation.")
     run_command("brew update", "Failed to update Homebrew", retries=2)
     os.environ["PATH"] = f"{brew_path}:{os.environ['PATH']}"
     run_command(
@@ -101,13 +108,11 @@ def install_python(system):
         install_homebrew()
         print("Attempting to install Python 3.11 via Homebrew...")
         try:
-            # Unlink any conflicting Python versions
             run_command(
                 "brew unlink python@3.13 || true",
                 "Failed to unlink Python 3.13",
                 silent=True
             )
-            # Check if python@3.11 is installed but not linked
             brew_list = run_command(
                 "brew list python@3.11 || true",
                 "Failed to check installed packages",
@@ -127,7 +132,6 @@ def install_python(system):
                 retries=2
             )
             python_bin = "/opt/homebrew/bin/python3.11"
-            # Verify Homebrew installation
             if os.path.exists(python_bin):
                 python_version = run_command(
                     f"{python_bin} --version",
@@ -157,7 +161,6 @@ def install_python(system):
                 "Failed to update PATH for Python 3.11"
             )
 
-    # Final verification
     try:
         python_version = run_command(
             f"{python_bin} --version",
@@ -231,7 +234,6 @@ def install_ollama(system):
     run_command(f"chmod +x {install_path} && sudo {install_path}", "Failed to install Ollama")
     os.remove(install_path)
 
-    # Configure Ollama to use all CPU cores or GPU
     cpu_count = multiprocessing.cpu_count()
     print(f"Configuring Ollama to use {cpu_count} CPU cores...")
     if system == "Linux" and shutil.which("nvidia-smi"):
@@ -247,19 +249,16 @@ def install_openwebui(python_bin):
     install_dir = Path("/opt/open-webui")
     install_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create virtual environment
     run_command(
         f"{python_bin} -m venv {install_dir}/venv",
         "Failed to create virtual environment"
     )
 
-    # Install OpenWebUI
     run_command(
         f"{install_dir}/venv/bin/pip install --upgrade pip && {install_dir}/venv/bin/pip install open-webui",
         "Failed to install OpenWebUI"
     )
 
-    # Set ownership
     user = getpass.getuser()
     run_command(f"sudo chown -R {user}:{user} {install_dir}", "Failed to set ownership")
 
