@@ -271,20 +271,26 @@ def install_dependencies(system):
 def install_ollama(system):
     """Install Ollama."""
     print("Installing Ollama...")
-    ollama_install_script = "https://ollama.com/install.sh"
-    install_path = "/tmp/ollama_install.sh"
-    urllib.request.urlretrieve(ollama_install_script, install_path)
-    run_command(f"chmod +x {install_path} && sudo {install_path}", "Failed to install Ollama")
-    os.remove(install_path)
+    if system == "Darwin":
+        install_homebrew()
+        run_command("brew install ollama", "Failed to install Ollama via Homebrew")
+    elif system == "Linux":
+        ollama_install_script = "https://ollama.com/install.sh"
+        install_path = "/tmp/ollama_install.sh"
+        urllib.request.urlretrieve(ollama_install_script, install_path)
+        run_command(f"chmod +x {install_path} && sudo {install_path}", "Failed to install Ollama")
+        os.remove(install_path)
 
     cpu_count = multiprocessing.cpu_count()
     print(f"Configuring Ollama to use {cpu_count} CPU cores...")
+
     if system == "Linux" and shutil.which("nvidia-smi"):
         print("NVIDIA GPU detected. Enabling GPU support for Ollama...")
         run_command(
             "sudo systemctl set-environment OLLAMA_NUM_THREADS=0 OLLAMA_USE_GPU=1",
             "Failed to set Ollama GPU environment"
         )
+
 
 def install_openwebui(python_bin):
     """Install OpenWebUI."""
