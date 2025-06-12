@@ -27,34 +27,44 @@ def run_command(command, error_message, silent=False, retries=1):
                 shell=True,
                 check=True,
                 text=True,
-                capture_output=silent
+                capture_output=True  # Always capture output
             )
-            return result.stdout if silent else None
+            if not silent:
+                print(f"Command output: {result.stdout}")
+            return result.stdout
         except subprocess.CalledProcessError as e:
+            print(f"Attempt {attempt} failed: {e}")
+            print(f"Command output: {e.output}")
             if attempt == retries:
                 print(f"{error_message}: {e}")
-                if silent:
-                    print(f"Command output: {e.output}")
-                sys.exit(1)
-            print(f"Attempt {attempt} failed, retrying...")
+                raise
+            print("Retrying...")
             time.sleep(2)
 
 def install_homebrew():
     """Install Homebrew on macOS if not present."""
     print("Checking for Homebrew...")
+    brew_path = "/opt/homebrew/bin" if platform.machine().startswith("arm") else "/usr/local/bin"
     if shutil.which("brew") is None:
         print("Installing Homebrew...")
         homebrew_install = (
             '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
         )
         run_command(homebrew_install, "Failed to install Homebrew", retries=2)
-    # Fix permissions and check Homebrew health
-    brew_path = "/opt/homebrew/bin" if platform.machine().startswith("arm") else "/usr/local/bin"
-    run_command(f"sudo chown -R $(whoami):admin {brew_path} /opt/homebrew", "Failed to fix Homebrew permissions")
+    # Fix permissions
+    run_command(
+        f"sudo chown -R $(whoami):admin {brew_path} /opt/homebrew /opt/homebrew/Cellar",
+        "Failed to fix Homebrew permissions",
+        retries=2
+    )
+    # Check Homebrew health
     run_command("brew doctor", "Homebrew health check failed", retries=2)
     run_command("brew update", "Failed to update Homebrew", retries=2)
     os.environ["PATH"] = f"{brew_path}:{os.environ['PATH']}"
-    run_command(f"echo 'export PATH={brew_path}:$PATH' >> ~/.zshrc", "Failed to update PATH")
+    run_command(
+        f"echo 'export PATH={brew_path}:$PATH' >> ~/.zshrc",
+        "Failed to update PATH"
+    )
 
 def check_python_version():
     """Check if the current Python is 3.11."""
@@ -69,7 +79,7 @@ def install_python(system):
         python_version = run_command(
             f"{python_bin} --version",
             "Python 3.11 check failed",
-            silent=True
+            silent=False
         )
         if "3.11" in python_version:
             print(f"Python 3.11 found: {python_version.strip()}")
@@ -91,42 +101,68 @@ def install_python(system):
         install_homebrew()
         print("Attempting to install Python 3.11 via Homebrew...")
         try:
+            # Unlink any conflicting Python versions
             run_command(
-                "brew install python@3.11",
-                "Failed to install Python 3.11 via Homebrew",
-                retries=2
+                "brew unlink python@3.13 || true",
+                "Failed to unlink Python 3.13",
+                silent=True
             )
+            # Check if python@3.11 is installed but not linked
+            brew_list = run_command(
+                "brew list python@3.11 || true",
+                "Failed to check installed packages",
+                silent=True
+            )
+            if "python@3.11" in brew_list:
+                print("Python 3.11 is installed but not linked.")
+            else:
+                run_command(
+                    "brew install python@3.11",
+                    "Failed to install Python 3.11 via Homebrew",
+                    retries=2
+                )
             run_command(
                 "brew link --force python@3.11",
                 "Failed to link Python 3.11",
                 retries=2
             )
             python_bin = "/opt/homebrew/bin/python3.11"
-        except SystemExit:
-            print("Homebrew installation failed, falling back to direct Python 3.11 installation...")
-            # Download and install Python 3.11 from Python.org
+            # Verify Homebrew installation
+            if os.path.exists(python_bin):
+                python_version = run_command(
+                    f"{python_bin} --version",
+                    "Python 3.11 verification failed after Homebrew install",
+                    silent=False
+                )
+                print(f"Python 3.11 installed via Homebrew: {python_version.strip()}")
+                return python_bin
+            else:
+                raise subprocess.CalledProcessError(1, "brew install", "Python 3.11 binary not found")
+        except subprocess.CalledProcessError:
+            print("Homebrew installation failed, falling back to Python.org installer...")
             temp_dir = tempfile.mkdtemp()
             python_pkg = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-macos11.pkg"
             pkg_path = os.path.join(temp_dir, "python-3.11.9-macos11.pkg")
             urllib.request.urlretrieve(python_pkg, pkg_path)
             run_command(
                 f"sudo installer -pkg {pkg_path} -target /",
-                "Failed to install Python 3.11 from package"
+                "Failed to install Python 3.11 from package",
+                retries=2
             )
             os.remove(pkg_path)
             python_bin = "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3.11"
-        os.environ["PATH"] = f"{os.path.dirname(python_bin)}:{os.environ['PATH']}"
-        run_command(
-            f"echo 'export PATH={os.path.dirname(python_bin)}:$PATH' >> ~/.zshrc",
-            "Failed to update PATH for Python 3.11"
-        )
+            os.environ["PATH"] = f"{os.path.dirname(python_bin)}:{os.environ['PATH']}"
+            run_command(
+                f"echo 'export PATH={os.path.dirname(python_bin)}:$PATH' >> ~/.zshrc",
+                "Failed to update PATH for Python 3.11"
+            )
 
-    # Verify installation
+    # Final verification
     try:
         python_version = run_command(
             f"{python_bin} --version",
-            "Python 3.11 installation verification failed",
-            silent=True
+            "Python 3.11 final verification failed",
+            silent=False
         )
         print(f"Python 3.11 installed: {python_version.strip()}")
         return python_bin
@@ -141,7 +177,7 @@ def install_node(system):
         node_version = run_command(
             "node --version",
             "Node.js check failed",
-            silent=True
+            silent=False
         )
         version = node_version.strip().lstrip("v")
         if tuple(map(int, version.split("."))) >= (20, 10, 0):
@@ -349,9 +385,7 @@ def main():
     """Main installation function."""
     print("Starting Ollama and OpenWebUI installation...")
     system = check_system()
-    # Install Python 3.11 first
     python_bin = install_python(system)
-    # Re-run with Python 3.11 if not already using it
     if not check_python_version():
         print("Current Python is not 3.11, re-running with Python 3.11...")
         if os.path.exists(python_bin):
@@ -360,7 +394,6 @@ def main():
             print(f"Error: Python 3.11 binary ({python_bin}) not found after installation.")
             sys.exit(1)
 
-    # Proceed with remaining dependencies and installation
     install_node(system)
     install_ollama(system)
     install_openwebui(python_bin)
