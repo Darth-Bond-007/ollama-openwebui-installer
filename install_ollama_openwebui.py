@@ -58,6 +58,7 @@ def install_python(system):
             silent=True
         )
         if "3.11" in python_version:
+            print("Python 3.11 found.")
             return
     except subprocess.CalledProcessError:
         pass
@@ -76,6 +77,25 @@ def install_python(system):
             "brew install python@3.11",
             "Failed to install Python 3.11 on macOS"
         )
+        # Ensure python3.11 is in PATH
+        brew_prefix = run_command("brew --prefix python@3.11", "Failed to get Python 3.11 prefix", silent=True).strip()
+        python_bin = f"{brew_prefix}/bin"
+        os.environ["PATH"] = f"{python_bin}:{os.environ['PATH']}"
+        run_command(
+            f"echo 'export PATH={python_bin}:$PATH' >> ~/.zshrc",
+            "Failed to update PATH for Python 3.11"
+        )
+        # Verify installation
+        try:
+            python_version = run_command(
+                "python3.11 --version",
+                "Python 3.11 installation verification failed",
+                silent=True
+            )
+            print(f"Python 3.11 installed: {python_version.strip()}")
+        except subprocess.CalledProcessError:
+            print("Error: Python 3.11 installation failed or not found in PATH.")
+            sys.exit(1)
 
 def install_node(system):
     """Install Node.js >= 20.10."""
@@ -88,6 +108,7 @@ def install_node(system):
         )
         version = node_version.strip().lstrip("v")
         if tuple(map(int, version.split("."))) >= (20, 10, 0):
+            print(f"Node.js {version} found.")
             return
     except subprocess.CalledProcessError:
         pass
@@ -100,6 +121,7 @@ def install_node(system):
             "Failed to install Node.js on Linux"
         )
     elif system == "Darwin":
+        install_homebrew()
         run_command(
             "brew install node@20",
             "Failed to install Node.js on macOS"
