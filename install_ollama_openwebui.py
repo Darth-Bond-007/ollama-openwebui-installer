@@ -296,7 +296,10 @@ def install_openwebui(python_bin):
     """Install OpenWebUI."""
     print("Installing OpenWebUI...")
     install_dir = Path("/opt/open-webui")
-    install_dir.mkdir(parents=True, exist_ok=True)
+if not install_dir.exists():
+    run_command(f"sudo mkdir -p {install_dir}", "Failed to create /opt/open-webui directory")
+    run_command(f"sudo chown {getpass.getuser()} {install_dir}", "Failed to set permissions for /opt/open-webui")
+
 
     run_command(
         f"{python_bin} -m venv {install_dir}/venv",
