@@ -7,6 +7,7 @@ import multiprocessing
 import urllib.request
 import getpass
 from pathlib import Path
+import time
 
 def check_system():
     """Check if the system is macOS or Linux."""
@@ -16,20 +17,26 @@ def check_system():
         sys.exit(1)
     return system
 
-def run_command(command, error_message, silent=False):
-    """Run a shell command and handle errors."""
-    try:
-        result = subprocess.run(
-            command,
-            shell=True,
-            check=True,
-            text=True,
-            capture_output=silent
-        )
-        return result.stdout if silent else None
-    except subprocess.CalledProcessError as e:
-        print(f"{error_message}: {e}")
-        sys.exit(1)
+def run_command(command, error_message, silent=False, retries=1):
+    """Run a shell command with retries and handle errors."""
+    for attempt in range(1, retries + 1):
+        try:
+            result = subprocess.run(
+                command,
+                shell=True,
+                check=True,
+                text=True,
+                capture_output=silent
+            )
+            return result.stdout if silent else None
+        except subprocess.CalledProcessError as e:
+            if attempt == retries:
+                print(f"{error_message}: {e}")
+                if silent:
+                    print(f"Command output: {e.output}")
+                sys.exit(1)
+            print(f"Attempt {attempt} failed, retrying...")
+            time.sleep(2)
 
 def install_homebrew():
     """Install Homebrew on macOS if not present."""
@@ -39,27 +46,31 @@ def install_homebrew():
         homebrew_install = (
             '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
         )
-        run_command(homebrew_install, "Failed to install Homebrew")
+        run_command(homebrew_install, "Failed to install Homebrew", retries=2)
         # Add Homebrew to PATH
-        if platform.machine().startswith("arm"):
-            brew_path = "/opt/homebrew/bin"
-        else:
-            brew_path = "/usr/local/bin"
+        brew_path = "/opt/homebrew/bin" if platform.machine().startswith("arm") else "/usr/local/bin"
         os.environ["PATH"] = f"{brew_path}:{os.environ['PATH']}"
         run_command(f"echo 'export PATH={brew_path}:$PATH' >> ~/.zshrc", "Failed to update PATH")
+    run_command("brew update", "Failed to update Homebrew", retries=2)
+
+def check_python_version():
+    """Check if the current Python is 3.11."""
+    python_version = sys.version_info
+    return python_version.major == 3 and python_version.minor == 11
 
 def install_python(system):
-    """Install Python 3.11 if not present."""
+    """Install Python 3.11 and return its binary path."""
     print("Checking for Python 3.11...")
+    python_bin = "/opt/homebrew/bin/python3.11" if system == "Darwin" else "python3.11"
     try:
         python_version = run_command(
-            "python3.11 --version",
+            f"{python_bin} --version",
             "Python 3.11 check failed",
             silent=True
         )
         if "3.11" in python_version:
-            print("Python 3.11 found.")
-            return
+            print(f"Python 3.11 found: {python_version.strip()}")
+            return python_bin
     except subprocess.CalledProcessError:
         pass
 
@@ -69,33 +80,36 @@ def install_python(system):
             "sudo apt-get update && sudo apt-get install -y software-properties-common && "
             "sudo add-apt-repository -y ppa:deadsnakes/ppa && sudo apt-get update && "
             "sudo apt-get install -y python3.11 python3.11-dev python3.11-venv",
-            "Failed to install Python 3.11 on Linux"
+            "Failed to install Python 3.11 on Linux",
+            retries=2
         )
+        python_bin = "python3.11"
     elif system == "Darwin":
         install_homebrew()
         run_command(
-            "brew install python@3.11",
-            "Failed to install Python 3.11 on macOS"
+            "brew install python@3.11 && brew link --force python@3.11",
+            "Failed to install and link Python 3.11 on macOS",
+            retries=2
         )
-        # Ensure python3.11 is in PATH
-        brew_prefix = run_command("brew --prefix python@3.11", "Failed to get Python 3.11 prefix", silent=True).strip()
-        python_bin = f"{brew_prefix}/bin"
-        os.environ["PATH"] = f"{python_bin}:{os.environ['PATH']}"
+        python_bin = "/opt/homebrew/bin/python3.11"
+        os.environ["PATH"] = f"/opt/homebrew/bin:{os.environ['PATH']}"
         run_command(
-            f"echo 'export PATH={python_bin}:$PATH' >> ~/.zshrc",
+            f"echo 'export PATH=/opt/homebrew/bin:$PATH' >> ~/.zshrc",
             "Failed to update PATH for Python 3.11"
         )
-        # Verify installation
-        try:
-            python_version = run_command(
-                "python3.11 --version",
-                "Python 3.11 installation verification failed",
-                silent=True
-            )
-            print(f"Python 3.11 installed: {python_version.strip()}")
-        except subprocess.CalledProcessError:
-            print("Error: Python 3.11 installation failed or not found in PATH.")
-            sys.exit(1)
+
+    # Verify installation
+    try:
+        python_version = run_command(
+            f"{python_bin} --version",
+            "Python 3.11 installation verification failed",
+            silent=True
+        )
+        print(f"Python 3.11 installed: {python_version.strip()}")
+        return python_bin
+    except subprocess.CalledProcessError:
+        print("Error: Python 3.11 installation failed or not found in PATH.")
+        sys.exit(1)
 
 def install_node(system):
     """Install Node.js >= 20.10."""
@@ -118,13 +132,15 @@ def install_node(system):
         run_command(
             "curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && "
             "sudo apt-get install -y nodejs",
-            "Failed to install Node.js on Linux"
+            "Failed to install Node.js on Linux",
+            retries=2
         )
     elif system == "Darwin":
         install_homebrew()
         run_command(
-            "brew install node@20",
-            "Failed to install Node.js on macOS"
+            "brew install node@20 && brew link --force node@20",
+            "Failed to install Node.js on macOS",
+            retries=2
         )
 
 def install_dependencies(system):
@@ -133,16 +149,19 @@ def install_dependencies(system):
     if system == "Linux":
         run_command(
             "sudo apt-get update && sudo apt-get install -y curl git",
-            "Failed to install Linux dependencies"
+            "Failed to install Linux dependencies",
+            retries=2
         )
     elif system == "Darwin":
         install_homebrew()
         run_command(
             "brew install curl git",
-            "Failed to install macOS dependencies"
+            "Failed to install macOS dependencies",
+            retries=2
         )
-    install_python(system)
+    python_bin = install_python(system)
     install_node(system)
+    return python_bin
 
 def install_ollama(system):
     """Install Ollama."""
@@ -163,7 +182,7 @@ def install_ollama(system):
             "Failed to set Ollama GPU environment"
         )
 
-def install_openwebui():
+def install_openwebui(python_bin):
     """Install OpenWebUI."""
     print("Installing OpenWebUI...")
     install_dir = Path("/opt/open-webui")
@@ -171,7 +190,7 @@ def install_openwebui():
 
     # Create virtual environment
     run_command(
-        f"python3.11 -m venv {install_dir}/venv",
+        f"{python_bin} -m venv {install_dir}/venv",
         "Failed to create virtual environment"
     )
 
@@ -305,11 +324,20 @@ WantedBy=multi-user.target
 
 def main():
     """Main installation function."""
-    print("Starting Ollama and OpenWebUI installation...")
     system = check_system()
-    install_dependencies(system)
+    if system == "Darwin" and not check_python_version():
+        print("Current Python is not 3.11, attempting to re-run with Python 3.11...")
+        python_bin = "/opt/homebrew/bin/python3.11"
+        if os.path.exists(python_bin):
+            # Re-run the script with Python 3.11
+            os.execv(python_bin, [python_bin, *sys.argv])
+        else:
+            print("Python 3.11 not found, proceeding to install it.")
+
+    print("Starting Ollama and OpenWebUI installation...")
+    python_bin = install_dependencies(system)
     install_ollama(system)
-    install_openwebui()
+    install_openwebui(python_bin)
     configure_services(system)
     print("Installation complete! Access OpenWebUI at http://localhost:8080")
     print("To download a model, run: ollama pull llama3")
