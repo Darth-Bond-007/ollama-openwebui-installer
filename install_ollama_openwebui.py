@@ -8,6 +8,7 @@ import urllib.request
 import getpass
 from pathlib import Path
 import time
+import tempfile
 
 def check_system():
     """Check if the system is macOS or Linux."""
@@ -47,11 +48,13 @@ def install_homebrew():
             '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
         )
         run_command(homebrew_install, "Failed to install Homebrew", retries=2)
-        # Add Homebrew to PATH
-        brew_path = "/opt/homebrew/bin" if platform.machine().startswith("arm") else "/usr/local/bin"
-        os.environ["PATH"] = f"{brew_path}:{os.environ['PATH']}"
-        run_command(f"echo 'export PATH={brew_path}:$PATH' >> ~/.zshrc", "Failed to update PATH")
+    # Fix permissions and check Homebrew health
+    brew_path = "/opt/homebrew/bin" if platform.machine().startswith("arm") else "/usr/local/bin"
+    run_command(f"sudo chown -R $(whoami):admin {brew_path} /opt/homebrew", "Failed to fix Homebrew permissions")
+    run_command("brew doctor", "Homebrew health check failed", retries=2)
     run_command("brew update", "Failed to update Homebrew", retries=2)
+    os.environ["PATH"] = f"{brew_path}:{os.environ['PATH']}"
+    run_command(f"echo 'export PATH={brew_path}:$PATH' >> ~/.zshrc", "Failed to update PATH")
 
 def check_python_version():
     """Check if the current Python is 3.11."""
@@ -86,15 +89,35 @@ def install_python(system):
         python_bin = "python3.11"
     elif system == "Darwin":
         install_homebrew()
+        print("Attempting to install Python 3.11 via Homebrew...")
+        try:
+            run_command(
+                "brew install python@3.11",
+                "Failed to install Python 3.11 via Homebrew",
+                retries=2
+            )
+            run_command(
+                "brew link --force python@3.11",
+                "Failed to link Python 3.11",
+                retries=2
+            )
+            python_bin = "/opt/homebrew/bin/python3.11"
+        except SystemExit:
+            print("Homebrew installation failed, falling back to direct Python 3.11 installation...")
+            # Download and install Python 3.11 from Python.org
+            temp_dir = tempfile.mkdtemp()
+            python_pkg = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-macos11.pkg"
+            pkg_path = os.path.join(temp_dir, "python-3.11.9-macos11.pkg")
+            urllib.request.urlretrieve(python_pkg, pkg_path)
+            run_command(
+                f"sudo installer -pkg {pkg_path} -target /",
+                "Failed to install Python 3.11 from package"
+            )
+            os.remove(pkg_path)
+            python_bin = "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3.11"
+        os.environ["PATH"] = f"{os.path.dirname(python_bin)}:{os.environ['PATH']}"
         run_command(
-            "brew install python@3.11 && brew link --force python@3.11",
-            "Failed to install and link Python 3.11 on macOS",
-            retries=2
-        )
-        python_bin = "/opt/homebrew/bin/python3.11"
-        os.environ["PATH"] = f"/opt/homebrew/bin:{os.environ['PATH']}"
-        run_command(
-            f"echo 'export PATH=/opt/homebrew/bin:$PATH' >> ~/.zshrc",
+            f"echo 'export PATH={os.path.dirname(python_bin)}:$PATH' >> ~/.zshrc",
             "Failed to update PATH for Python 3.11"
         )
 
@@ -324,18 +347,21 @@ WantedBy=multi-user.target
 
 def main():
     """Main installation function."""
+    print("Starting Ollama and OpenWebUI installation...")
     system = check_system()
-    if system == "Darwin" and not check_python_version():
-        print("Current Python is not 3.11, attempting to re-run with Python 3.11...")
-        python_bin = "/opt/homebrew/bin/python3.11"
+    # Install Python 3.11 first
+    python_bin = install_python(system)
+    # Re-run with Python 3.11 if not already using it
+    if not check_python_version():
+        print("Current Python is not 3.11, re-running with Python 3.11...")
         if os.path.exists(python_bin):
-            # Re-run the script with Python 3.11
             os.execv(python_bin, [python_bin, *sys.argv])
         else:
-            print("Python 3.11 not found, proceeding to install it.")
+            print(f"Error: Python 3.11 binary ({python_bin}) not found after installation.")
+            sys.exit(1)
 
-    print("Starting Ollama and OpenWebUI installation...")
-    python_bin = install_dependencies(system)
+    # Proceed with remaining dependencies and installation
+    install_node(system)
     install_ollama(system)
     install_openwebui(python_bin)
     configure_services(system)
