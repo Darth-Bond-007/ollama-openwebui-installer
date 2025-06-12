@@ -224,9 +224,28 @@ def install_node(system):
     elif system == "Darwin":
         install_homebrew()
         run_command(
-            "brew install node@20 && brew link --force node@20",
+            "brew install node@20 || true",
             "Failed to install Node.js on macOS",
             retries=2
+        )
+
+        try:
+            run_command("brew link --overwrite --force node@20", "Failed to link Node.js")
+        except subprocess.CalledProcessError:
+            print("Warning: Failed to force-link node@20, attempting manual symlink...")
+
+            node_path = "/opt/homebrew/opt/node@20/bin/node"
+            npm_path = "/opt/homebrew/opt/node@20/bin/npm"
+
+            if os.path.exists(node_path):
+                run_command(f"sudo ln -sf {node_path} /opt/homebrew/bin/node", "Failed to symlink node binary")
+            if os.path.exists(npm_path):
+                run_command(f"sudo ln -sf {npm_path} /opt/homebrew/bin/npm", "Failed to symlink npm binary")
+
+        # Ensure PATH persistence
+        run_command(
+            "echo 'export PATH=/opt/homebrew/bin:$PATH' >> ~/.zshrc",
+            "Failed to export Homebrew path"
         )
 
 def install_dependencies(system):
